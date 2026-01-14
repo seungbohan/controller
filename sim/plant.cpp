@@ -1,31 +1,27 @@
 #include "plant.hpp"
-#include "../src/main_inputs_outputs.hpp" // 아래 3번 참고
+#include <algorithm>
+#include <cmath>
 
 void Plant::step(const Outputs& out, Inputs& in, double dt) {
-    // ---- velocity (1st order lag) ----
-    if (out.drive_cmd) {
-        velocity += (v_target - velocity) * alpha;
-    } else {
-        velocity += (0.0 - velocity) * alpha;
-    }
+    // -------------------------
+    // drive velocity (1st order)
+    // -------------------------
+    const double target_v = out.drive_cmd ? 1.0 : 0.0;
+    // simple response
+    vel += (target_v - vel) * std::clamp(dt * 2.0, 0.0, 1.0);
+    if (std::abs(vel) < 1e-4) vel = 0.0;
 
-    // 작은 값 정리
-    if (std::abs(velocity) < 1e-3) velocity = 0.0;
+    in.velocity = vel;
 
-    // ---- lift position ----
-    if (out.lift_cmd) {
-        lift_pos += lift_rate * dt;
-    }
+    // -------------------------
+    // lift/dump positions (hold-to-run)
+    // -------------------------
+    if (out.lift_cmd) lift_pos += dt * 0.6;
+    if (out.dump_cmd) dump_pos += dt * 1.2;
+
     lift_pos = std::clamp(lift_pos, 0.0, 1.0);
-    in.lift_complete = (lift_pos >= 1.0);
-
-    // ---- dump position ----
-    if (out.dump_cmd) {
-        dump_pos += dump_rate * dt;
-    }
     dump_pos = std::clamp(dump_pos, 0.0, 1.0);
-    in.dump_complete = (dump_pos >= 1.0);
 
-    // publish measured back to controller inputs
-    in.velocity = velocity;
+    // plant generates completes when reaching 1.0 (optional)
+    // (너 demo에서는 main에서 complete를 직접 토글하니까, 여기서는 자동 complete는 꺼둬도 됨)
 }
