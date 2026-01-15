@@ -51,25 +51,26 @@ enum class FaultReason : std::uint16_t {
 
 static const char* fault_to_string(FaultReason r) {
     switch (r) {
-        case FaultReason::NONE:           return "NONE";
-        case FaultReason::ESTOP:          return "E_STOP";
-        case FaultReason::CRITICAL_DTC:   return "CRITICAL_DTC";
-        case FaultReason::CAN_TIMEOUT:    return "CAN_TIMEOUT";
-        case FaultReason::COMMS_LOST:     return "COMMS_LOST";
-        case FaultReason::LIFT_TIMEOUT:   return "LIFT_TIMEOUT";
-        case FaultReason::LIFT_SENSOR_ERR:return "LIFT_SENSOR_ERR";
-        case FaultReason::DUMP_TIMEOUT:   return "DUMP_TIMEOUT";
-        case FaultReason::DUMP_SENSOR_ERR:return "DUMP_SENSOR_ERR";
-        default:                          return "UNKNOWN_FAULT";
+        case FaultReason::NONE:            return "NONE";
+        case FaultReason::ESTOP:           return "E_STOP";
+        case FaultReason::CRITICAL_DTC:    return "CRITICAL_DTC";
+        case FaultReason::CAN_TIMEOUT:     return "CAN_TIMEOUT";
+        case FaultReason::COMMS_LOST:      return "COMMS_LOST";
+        case FaultReason::LIFT_TIMEOUT:    return "LIFT_TIMEOUT";
+        case FaultReason::LIFT_SENSOR_ERR: return "LIFT_SENSOR_ERR";
+        case FaultReason::DUMP_TIMEOUT:    return "DUMP_TIMEOUT";
+        case FaultReason::DUMP_SENSOR_ERR: return "DUMP_SENSOR_ERR";
+        default:                           return "UNKNOWN_FAULT";
     }
 }
 
 // ✅ 우선순위 테이블(원하는 정책대로 여기만 바꾸면 끝)
-static FaultReason pick_fault_reason(const Inputs& in) {
+// ✅ 실무식: "comms_ok_filtered"를 넣어서 1틱 노이즈 같은 걸 타임아웃 기반으로 걸러냄
+static FaultReason pick_fault_reason(const Inputs& in, bool comms_ok_filtered) {
     if (in.estop_button)            return FaultReason::ESTOP;
     if (in.critical_dtc)            return FaultReason::CRITICAL_DTC;
     if (in.can_timeout)             return FaultReason::CAN_TIMEOUT;
-    if (!in.comms_ok)               return FaultReason::COMMS_LOST;
+    if (!comms_ok_filtered)         return FaultReason::COMMS_LOST;
 
     if (in.lift_timeout)            return FaultReason::LIFT_TIMEOUT;
     if (in.lift_sensor_error)       return FaultReason::LIFT_SENSOR_ERR;
@@ -98,6 +99,9 @@ public:
     bool lift_inhibit_until_release = false;
     bool dump_inhibit_until_release = false;
 
+    // ✅ 외부(main)에서 no_active_fault 계산할 때 쓰기 위한 getter
+    bool get_comms_ok_filtered() const { return comms_ok_filtered; }
+
     void step(const Inputs& in) {
         const bool stopped = (std::abs(in.velocity) < 0.01);
 
@@ -108,6 +112,30 @@ public:
         if (!in.lift_request) lift_inhibit_until_release = false;
         if (!in.dump_request) dump_inhibit_until_release = false;
 
+        // =========================================================
+        // ✅ 실무식 COMMS_LOST 판정 (시간 기반 타임아웃 + 복구 히스테리시스)
+        // - FAIL_TIMEOUT_MS 동안 연속으로 comms_ok=false면 "확정 끊김"
+        // - RECOVER_STABLE_MS 동안 연속으로 comms_ok=true면 "복구 인정"
+        // - 이후 fault_latched 철학은 그대로: 래치 + ACK
+        // =========================================================
+        constexpr int DT_MS = 10; // 이 step은 10ms 주기로 불린다는 가정
+
+        if (!in.comms_ok) {
+            comms_fail_ms += DT_MS;
+            comms_ok_ms = 0;
+
+            if (comms_fail_ms >= COMMS_FAIL_TIMEOUT_MS) {
+                comms_ok_filtered = false;
+            }
+        } else {
+            comms_ok_ms += DT_MS;
+            comms_fail_ms = 0;
+
+            if (comms_ok_ms >= COMMS_RECOVER_STABLE_MS) {
+                comms_ok_filtered = true;
+            }
+        }
+
         // 0) E-STOP 최우선 상태
         if (in.estop_button) {
             state = State::E_STOP;
@@ -116,8 +144,8 @@ public:
             return;
         }
 
-        // 1) fault 감지 (우선순위로 1개 선택)
-        const FaultReason current = pick_fault_reason(in);
+        // 1) fault 감지 (우선순위로 1개 선택)  ✅ comms_ok_filtered 사용
+        const FaultReason current = pick_fault_reason(in, comms_ok_filtered);
 
         // 2) 래치 세트: 처음 fault만 저장
         if (current != FaultReason::NONE && !fault_latched) {
@@ -142,9 +170,20 @@ public:
     }
 
 private:
+    // ---- COMMS 필터 내부 상태 ----
+    int  comms_fail_ms = 0;
+    int  comms_ok_ms   = 0;
+    bool comms_ok_filtered = true;
+
+    // ---- 튜닝 파라미터(실무 기본값) ----
+    static constexpr int COMMS_FAIL_TIMEOUT_MS   = 50;   // 50ms 이상 끊김이면 확정 FAULT
+    static constexpr int COMMS_RECOVER_STABLE_MS = 100;  // 100ms 이상 안정이면 복구 인정
+
     void handle_idle(const Inputs& in, bool stopped) {
         // DRIVE (hold-to-drive)
-        if (in.drive_enable && in.battery_ok && in.comms_ok && stopped) {
+        // ✅ comms_ok_filtered를 쓸지, 원본 in.comms_ok를 쓸지는 정책 선택
+        // 실무에서는 "동작 허가"도 필터된 값을 쓰는 편이 많음(깜빡임 방지)
+        if (in.drive_enable && in.battery_ok && comms_ok_filtered && stopped) {
             state = State::DRIVE;
             out.drive_cmd = true;
             return;
@@ -168,7 +207,8 @@ private:
     }
 
     void handle_drive(const Inputs& in) {
-        out.drive_cmd = in.drive_enable && in.battery_ok && in.comms_ok;
+        // ✅ 여기서도 필터된 comms 값 사용(노이즈로 drive_cmd 깜빡임 방지)
+        out.drive_cmd = in.drive_enable && in.battery_ok && comms_ok_filtered;
         if (!in.drive_enable) state = State::IDLE;
     }
 
@@ -284,8 +324,9 @@ int main() {
         // 100ms: Diagnostics (no_active_fault 갱신)
         // -------------------------
         if (now - last_diag >= std::chrono::milliseconds(100)) {
+            // ✅ 여기서도 "필터된 comms"를 사용해야 논리가 일관됨
             in.no_active_fault =
-                   in.comms_ok
+                   ctrl.get_comms_ok_filtered()
                 && !in.can_timeout
                 && !in.critical_dtc
                 && !in.lift_timeout
@@ -316,7 +357,8 @@ int main() {
                       << " lift_btn=" << (in.lift_request ? 1 : 0)
                       << " dump_btn=" << (in.dump_request ? 1 : 0)
                       << " estop=" << (in.estop_button ? 1 : 0)
-                      << " comms=" << (in.comms_ok ? 1 : 0)
+                      << " comms_raw=" << (in.comms_ok ? 1 : 0)
+                      << " comms_filt=" << (ctrl.get_comms_ok_filtered() ? 1 : 0)
                       << " fault_latch=" << (ctrl.fault_latched ? 1 : 0)
                       << " fault_reason=" << (ctrl.fault_latched ? fault_to_string(ctrl.latched_reason) : "NONE")
                       << " fault_code=" << ctrl.out.fault_code
