@@ -4,6 +4,7 @@
 #include <thread>
 #include <cmath>
 
+#include "pid.hpp"
 #include "../sim/plant.hpp"
 #include "main_inputs_outputs.hpp"
 
@@ -94,6 +95,9 @@ public:
     FaultReason latched_reason = FaultReason::NONE;
 
     Outputs out{};
+
+    PID drive_pid{5.0, 2.0, 0.0};
+    double target_velocity = 1.0;
 
     // ✅ complete 후 버튼 release까지 재진입 금지
     bool lift_inhibit_until_release = false;
@@ -208,8 +212,17 @@ private:
 
     void handle_drive(const Inputs& in) {
         // ✅ 여기서도 필터된 comms 값 사용(노이즈로 drive_cmd 깜빡임 방지)
-        out.drive_cmd = in.drive_enable && in.battery_ok && comms_ok_filtered;
-        if (!in.drive_enable) state = State::IDLE;
+        if (!in.drive_enable || !in.battery_ok || !in.comms_ok) {
+            out.drive_cmd = false;
+            out.motor_cmd = 0.0;
+            drive_pid.reset();
+            state = State::IDLE;
+            return;
+        }
+
+        constexpr double dt = 0.01;
+        out.drive_cmd = true;
+        out.motor_cmd = drive_pid.compute(target_velocity, in.velocity, dt);
     }
 
     void handle_lift(const Inputs& in, bool stopped) {
@@ -287,38 +300,102 @@ int main() {
         // -------------------------
         // 10ms: Control loop
         // -------------------------
+        // ============================
+        // 목적: 5개 시나리오 PASS/FAIL을 로그로 확인
+        // 각 시나리오 사이에 1~2초 "휴지(Idle)"를 넣어서 보기 쉽게 함.
+        //
+        // 시간 환산: tick10ms 100 = 1초
+        // ============================
+
+        // ---- defaults that persist unless changed ----
         if (now - last_control >= std::chrono::milliseconds(10)) {
 
-            // ---- demo sequence ----
-            if (tick10ms == 200)  in.drive_enable = true;
-            if (tick10ms == 600)  in.drive_enable = false;
+        // ============================
+        // (1) HOLD 입력은 매 tick 기본값을 0으로 리셋
+        // ============================
+        in.drive_enable = false;
+        in.lift_request = false;
+        in.dump_request = false;
+        in.operator_ack = false;
 
-            if (tick10ms == 800)  in.lift_request = true;
-            if (tick10ms == 980)  in.lift_complete = true;
-            if (tick10ms == 990)  in.lift_complete = false;
-            if (tick10ms == 1000) in.lift_request = false;
+        // comms_ok도 "기본 true"로 두고, 시나리오에서만 false로 만들면 깔끔함
+        in.comms_ok = true;
 
-            if (tick10ms == 1200) in.dump_request = true;
-            if (tick10ms == 1380) in.dump_complete = true;
-            if (tick10ms == 1390) in.dump_complete = false;
-            if (tick10ms == 1400) in.dump_request = false;
+        // ============================
+        // (2) 1회성 초기화 (최초 1번만)
+        // ============================
+        if (tick10ms == 0) {
+            in.velocity = 0.0;
+            in.battery_ok = true;
+            in.estop_button = false;
 
-            if (tick10ms == 1450) in.estop_button = true;
-            if (tick10ms == 1500) { in.estop_button = false; in.operator_ack = true; }
-            if (tick10ms == 1510) in.operator_ack = false;
+            in.can_timeout = false;
+            in.critical_dtc = false;
+            in.lift_timeout = false;
+            in.lift_sensor_error = false;
+            in.dump_timeout = false;
+            in.dump_sensor_error = false;
 
-            // FAULT demo (comms lost)
-            if (tick10ms == 1600) in.comms_ok = false;
-            if (tick10ms == 1800) in.comms_ok = true;        // 복구돼도 latch 유지
-            if (tick10ms == 1900) in.operator_ack = true;    // no_active_fault && ACK면 해제
-            if (tick10ms == 1910) in.operator_ack = false;
-
-            ctrl.step(in);
-            plant.step(ctrl.out, in, 0.01);
-
-            last_control = now;
-            tick10ms++;
+            in.lift_complete = false;
+            in.dump_complete = false;
         }
+
+        // ============================
+        // (3) 5개 시나리오 스케줄
+        // ============================
+
+        // Scenario 1: DRIVE hold
+        if (tick10ms >= 100 && tick10ms < 2050) {
+            in.drive_enable = true;
+        }
+
+        // // Scenario 2: LIFT hold + complete + inhibit
+        // if (tick10ms >= 450 && tick10ms < 600) {
+        //     in.lift_request = true;
+        // }
+        // if (tick10ms == 550) in.lift_complete = true;
+        // if (tick10ms == 560) in.lift_complete = false;
+
+        // // Scenario 3: lift + dump 동시에
+        // if (tick10ms >= 800 && tick10ms < 850) {
+        //     in.lift_request = true;
+        //     in.dump_request = true;
+        // }
+
+        // // Scenario 4: E-STOP
+        // if (tick10ms >= 950 && tick10ms < 1050) {
+        //     in.drive_enable = true;
+        // }
+        // if (tick10ms >= 1000 && tick10ms < 1020) {
+        //     in.estop_button = true;
+        // }
+        // if (tick10ms == 1020) in.estop_button = false;
+        // if (tick10ms == 1030) in.operator_ack = true; // ACK 펄스
+
+        // // Scenario 5: COMMS_LOST (필터 타임아웃 넘기도록 300ms 끊기)
+        // if (tick10ms >= 1150 && tick10ms < 1180) {
+        //     in.comms_ok = false;
+        // }
+        // // 복구 후 200ms 정도 기다렸다 ACK (필터 복구 안정시간 100ms + diag 갱신 고려)
+        // if (tick10ms == 1220) in.operator_ack = true;
+
+        // ============================
+        // (4) 컨트롤러/플랜트 실행 
+        // ============================
+        ctrl.step(in);
+        plant.step(ctrl.out, in, 0.01); // 10ms = 0.01s
+
+        // ============================
+        // (5) tick 증가 
+        // ============================
+        tick10ms++;
+        last_control = now;
+    }
+
+        // ============================
+        // End of test suite
+        // ============================
+
 
         // -------------------------
         // 100ms: Diagnostics (no_active_fault 갱신)
@@ -366,9 +443,10 @@ int main() {
                       << " lift=" << (ctrl.out.lift_cmd ? 1 : 0)
                       << " dump=" << (ctrl.out.dump_cmd ? 1 : 0)
                       << " vel=" << in.velocity
+                      << " motor_cmd=" << ctrl.out.motor_cmd
                       << " lift_p=" << plant.lift_pos
                       << " dump_p=" << plant.dump_pos
-                      << "\n";
+                      << "\n";      
 
             last_log = now;
         }

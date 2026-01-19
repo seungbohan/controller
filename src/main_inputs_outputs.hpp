@@ -43,6 +43,8 @@ struct Outputs {
     bool lift_cmd  = false;
     bool dump_cmd  = false;
 
+    double motor_cmd = 0.0;
+
     // ✅ 나중 CAN Diag/DTC 프레임으로 내보낼 "FAULT 코드"
     // 0이면 정상 / 0이 아니면 fault reason 코드
     std::uint16_t fault_code = 0;
