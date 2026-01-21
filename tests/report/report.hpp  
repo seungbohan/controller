@@ -1,0 +1,11 @@
+static void print_report(const Metrics& m, const PassFail& pf) {
+  std::cout << "\n[DRIVE STEP TEST]\n";
+  std::cout << "Rise Time        : " << m.rise_time << " s   (" << (pf.pr01_rise ? "PASS" : "FAIL") << ")\n";
+  std::cout << "Overshoot        : " << m.overshoot_pct << " %   (" << (pf.pr02_over ? "PASS" : "FAIL") << ")\n";
+  std::cout << "Settling Time    : " << m.settling_time << " s   (" << (pf.pr03_settle ? "PASS" : "FAIL") << ")\n";
+  std::cout << "Steady-State Err : " << m.ss_error << "     (" << (pf.pr04_ss ? "PASS" : "FAIL") << ")\n";
+  std::cout << "Sat Duration     : " << m.max_sat_duration << " s (" << (pf.pr05_sat ? "PASS" : "FAIL") << ")\n";
+
+  bool all = pf.pr01_rise && pf.pr02_over && pf.pr03_settle && pf.pr04_ss && pf.pr05_sat;
+  std::cout << "\nRESULT: " << (all ? "✅ PASS" : "❌ FAIL") << "\n\n";
+}

@@ -27,13 +27,20 @@ struct Inputs {
     // derived / diagnostic
     bool no_active_fault = true;
 
-    // feedback (e.g. velocity)
+    // feedback
     double velocity = 0.0;
 
-    // operation complete flags (from plant/sensors)
+    // operation complete
     bool lift_complete = false;
     bool dump_complete = false;
+
+    // control / test inputs
+    double target_velocity = 1.0;  // 제어 목표
+    int scenario_id = 0;            // 시험 시나리오 ID
+    int step_id = 0;                // 스텝 번호
+    bool step_active = false;       // 스텝 시작 신호
 };
+
 
 // =====================
 // Outputs to actuators / CAN commands
