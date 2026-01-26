@@ -76,3 +76,6 @@ Conclusion: Gains accepted as final configuration
 
 이는 산업용 제어 시스템에서 요구되는
 안정성, 예측 가능성, 안전성 중심의 설계 사고를 반영한 결과이다.
+
+10. 
+Drive Velocity PID 컨트롤러가 3단계 검증 테스트(0→1.0, 1.0→0.3, 0.3→0.8)에서 모든 기능 및 성능 요구사항을 충족해야 하며, 자동으로 측정값을 추출하고 PASS/FAIL 판정을 내린다.

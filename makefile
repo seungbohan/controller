@@ -1,14 +1,13 @@
-CXX := g++
-CXXFLAGS := -std=c++17 -O2 -Wall -Wextra
+CXX = g++
+CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -Iinclude -Isrc -Isim -Itests
 
-TARGET := controller
+SRC = tests/test_runner.cpp src/controller_core.cpp sim/plant.cpp
+OUT = controller_tests
 
-SRC := src/main.cpp sim/plant.cpp
+all: $(OUT)
 
-all: $(TARGET)
-
-$(TARGET): $(SRC)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SRC)
+$(OUT): $(SRC)
+	$(CXX) $(CXXFLAGS) -o $(OUT) $(SRC)
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(OUT)

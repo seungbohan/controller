@@ -1,5 +1,5 @@
 #pragma once
-#include "../src/main_inputs_outputs.hpp"
+#include "../include/main_inputs_outputs.hpp"
 
 struct Plant {
     // simple plant states (0~1)

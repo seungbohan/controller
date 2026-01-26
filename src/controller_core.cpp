@@ -108,6 +108,8 @@ Outputs ControllerCore::step(const Inputs& in, double dt) {
     dbg_.comms_ok_filtered = comms_ok_filtered_;
     dbg_.fault_code = out_.fault_code;
 
+    dbg_.pid_dbg = drive_pid_.dbg;
+
     return out_;
 }
 

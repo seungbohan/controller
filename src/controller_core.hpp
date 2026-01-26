@@ -68,7 +68,7 @@ private:
     Outputs out_{};
 
     // PID (main.cpp 기본값 그대로)
-    PID drive_pid_{5.0, 3.0, 1.5};
+    PID drive_pid_{1.9, 2.5, 0.0};
 
     // complete 후 버튼 release 전 재진입 금지
     bool lift_inhibit_until_release_ = false;
